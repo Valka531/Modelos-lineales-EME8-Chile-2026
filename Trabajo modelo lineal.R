@@ -1,4 +1,3 @@
-
 # ==========================================
 # PREGUNTA 1: AUDITORIA DE LA EXPOSICION
 # VIII ENCUESTA DE MICROEMPRENDIMIENTO
@@ -929,6 +928,16 @@ par(mfrow = c(1, 1))
 # 1. PREPARACION DE LOS DATOS
 # ------------------------------------------------------------
 
+
+
+modelo_base_q5 <- lm(
+  ganancia_final ~
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    c6_3 + c7 + total_trabajadores +
+    informalidad + c1_b + sexo + region,
+  data = train_q5
+)
+
 # Variables ambientales
 amenazas <- c("m2_1", "m2_2", "m2_3", "m2_4")
 
@@ -1092,6 +1101,34 @@ hist(
 )
 
 abline(v = 0, lty = 2)
+
+
+# TRANSFORMACIONES LOGARÍTMICAS
+
+datos_a <- train_q5
+
+datos_a$log_c6_3 <- log1p(datos_a$c6_3)
+datos_a$log_total_trabajadores <- log1p(
+  datos_a$total_trabajadores
+)
+
+modelo_a_log <- lm(
+  ganancia_final ~
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    log_c6_3 + c7 + log_total_trabajadores +
+    informalidad + c1_b + sexo + region,
+  data = datos_a
+)
+
+# Comparación de modelos
+AIC(modelo_base_q5, modelo_a_log)
+BIC(modelo_base_q5, modelo_a_log)
+
+summary(modelo_base_q5)
+summary(modelo_a_log)
+
+# Errores estándar robustos HC3
+coeftest(modelo_a_log, vcov. = vcovHC(modelo_a_log, type = "HC3"))
 
 # ------------------------------------------------------------
 # 3. INCISO B: CONSTRUIR TRANSFORMACIONES
@@ -1359,6 +1396,49 @@ qqline(residuals(modelo_log_signo))
 # Restaurar configuracion grafica
 par(mfrow = c(1, 1))
 
+# TÉRMINO CUADRÁTICO DE MESES DE OPERACIÓN
+
+datos_b <- train_q5
+
+# Centrar c7 para facilitar la interpretación
+datos_b$c7_c <- datos_b$c7 - mean(datos_b$c7, na.rm = TRUE)
+datos_b$c7_c2 <- datos_b$c7_c^2
+
+modelo_b_lineal <- lm(
+  ganancia_final ~
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    c6_3 + c7_c + total_trabajadores +
+    informalidad + c1_b + sexo + region,
+  data = datos_b
+)
+
+modelo_b_cuadratico <- lm(
+  ganancia_final ~
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    c6_3 + c7_c + c7_c2 + total_trabajadores +
+    informalidad + c1_b + sexo + region,
+  data = datos_b
+)
+
+# Comparación de ajuste
+AIC(modelo_b_lineal, modelo_b_cuadratico)
+BIC(modelo_b_lineal, modelo_b_cuadratico)
+
+summary(modelo_b_cuadratico)
+
+# Significancia robusta del término cuadrático
+coeftest(
+  modelo_b_cuadratico,
+  vcov. = vcovHC(modelo_b_cuadratico, type = "HC3")
+)
+
+# Prueba de inclusión del término cuadrático
+linearHypothesis(
+  modelo_b_cuadratico,
+  "c7_c2 = 0",
+  vcov. = vcovHC(modelo_b_cuadratico, type = "HC3")
+)
+
 
 # ------------------------------------------------------------
 # 8. INCISO C: RETRANSFORMACION
@@ -1532,6 +1612,38 @@ mejor_RMSE <- metricas_finales$Modelo[
 mejor_MAE
 # Mejor modelo según RMSE
 mejor_RMSE
+
+# --------------------------------------------------
+# C) INTERACCIÓN: ALGUNA AMENAZA x INFORMALIDAD
+# --------------------------------------------------
+
+modelo_c_sin_interaccion <- lm(
+  ganancia_final ~
+    alguna_amenaza + informalidad +
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    c6_3 + c7 + total_trabajadores +
+    c1_b + sexo + region,
+  data = train_q5
+)
+
+modelo_c_interaccion <- lm(
+  ganancia_final ~
+    alguna_amenaza * informalidad +
+    m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+    c6_3 + c7 + total_trabajadores +
+    c1_b + sexo + region,
+  data = train_q5
+)
+
+# Comparación de ajuste
+AIC(modelo_c_sin_interaccion, modelo_c_interaccion)
+BIC(modelo_c_sin_interaccion, modelo_c_interaccion)
+
+# Coeficientes y errores robustos HC3
+coeftest(
+  modelo_c_interaccion,
+  vcov. = vcovHC(modelo_c_interaccion, type = "HC3")
+)
 
 # ============================================================
 # PREGUNTA 5: FORMAS FUNCIONALES E INTERACCIONES
@@ -2626,4 +2738,37 @@ print(comparacion_amenazas)
 
 
 
+library(lmtest)
+library(sandwich)
 
+resultados_interaccion <- lapply(1:5, function(k) {
+  
+  datos_fold <- subset(train_q5, fold != k)
+  
+  modelo_fold <- lm(
+    ganancia_final ~
+      alguna_amenaza * informalidad +
+      m2_1_bin + m2_2_bin + m2_3_bin + m2_4_bin +
+      c6_3 + c7 + total_trabajadores +
+      c1_b + sexo + region,
+    data = datos_fold
+  )
+  
+  robustos <- coeftest(
+    modelo_fold,
+    vcov. = vcovHC(modelo_fold, type = "HC3")
+  )
+  
+  nombre <- "alguna_amenaza:informalidad1"
+  
+  data.frame(
+    Pliegue_excluido = k,
+    Coeficiente = robustos[nombre, 1],
+    Error_HC3 = robustos[nombre, 2],
+    Valor_p = robustos[nombre, 4]
+  )
+})
+
+tabla_estabilidad <- do.call(rbind, resultados_interaccion)
+
+print(tabla_estabilidad)
